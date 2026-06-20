@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <h3>{{ exam.title }} — Result</h3>
+    <p>
+      Status:
+      {% if attempt.status == 'auto_submitted' %}
+        <span class="badge bg-danger">{{ attempt.get_status_display }}</span>
+      {% else %}
+        <span class="badge bg-success">{{ attempt.get_status_display }}</span>
+      {% endif %}
+    </p>
+    <h4>Score: {{ attempt.score }} / {{ exam.total_marks }}</h4>
+    <p>Tab-switch / focus violations recorded: <strong>{{ attempt.violation_count }}</strong></p>
+    <hr>
+    <h5>Answer Review</h5>
+    {% for a in answers %}
+    <div class="mb-2 p-2 border rounded {% if a.selected_option == a.question.correct_option %}border-success{% else %}border-danger{% endif %}">
+      <strong>{{ forloop.counter }}. {{ a.question.text }}</strong><br>
+      Your answer: {{ a.selected_option|default:"Not answered" }}
+      &nbsp;|&nbsp;
+      Correct answer: {{ a.question.correct_option }}
+    </div>
+    {% endfor %}
+    <a href="{% url 'student-dashboard' %}" class="btn btn-primary mt-3">Back to Dashboard</a>
+  </div>
+</div>
+{% endblock %}

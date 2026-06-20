@@ -1,0 +1,184 @@
+{% extends 'base.html' %}
+{% load exam_extras %}
+{% block title %}{{ exam.title }} - Test{% endblock %}
+{% block content %}
+
+<div id="start-screen" class="text-center py-5">
+  <h3>{{ exam.title }}</h3>
+  <p class="text-muted">{{ exam.description }}</p>
+  <ul class="list-unstyled">
+    <li>Duration: <strong>{{ exam.duration_minutes }} minutes</strong></li>
+    <li>Questions: <strong>{{ questions|length }}</strong></li>
+    <li>Tab-switch warnings allowed: <strong>{{ max_violations }}</strong></li>
+  </ul>
+  <div class="alert alert-warning col-md-8 mx-auto">
+    This test runs in <strong>fullscreen mode</strong>. Switching tabs, minimizing the window,
+    switching to another application, or exiting fullscreen will be recorded as a violation.
+    After <strong>{{ max_violations }}</strong> violations your test will be
+    <strong>auto-submitted</strong> automatically.
+  </div>
+  <button id="start-btn" class="btn btn-primary btn-lg">Start Test (Enter Fullscreen)</button>
+</div>
+
+<div id="exam-screen" style="display:none;">
+  <div class="d-flex justify-content-between align-items-center mb-3 sticky-top bg-white py-2 border-bottom">
+    <h4 class="mb-0">{{ exam.title }}</h4>
+    <div>
+      <span class="badge bg-danger fs-6" id="timer">--:--</span>
+      <span class="badge bg-warning text-dark fs-6 ms-2" id="violation-badge">Warnings: 0 / {{ max_violations }}</span>
+    </div>
+  </div>
+
+  <form id="exam-form" method="post">
+    {% csrf_token %}
+    <input type="hidden" name="auto_submit" id="auto_submit" value="0">
+    {% for q in questions %}
+    <div class="card mb-3">
+      <div class="card-body">
+        <p class="fw-bold">Q{{ forloop.counter }}. {{ q.text }}
+          <span class="text-muted small">({{ q.marks }} mark{{ q.marks|pluralize }})</span>
+        </p>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="question_{{ q.id }}" id="q{{ q.id }}_A" value="A" {% if answers|get_item:q.id == 'A' %}checked{% endif %}>
+          <label class="form-check-label" for="q{{ q.id }}_A">A. {{ q.option_a }}</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="question_{{ q.id }}" id="q{{ q.id }}_B" value="B" {% if answers|get_item:q.id == 'B' %}checked{% endif %}>
+          <label class="form-check-label" for="q{{ q.id }}_B">B. {{ q.option_b }}</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="question_{{ q.id }}" id="q{{ q.id }}_C" value="C" {% if answers|get_item:q.id == 'C' %}checked{% endif %}>
+          <label class="form-check-label" for="q{{ q.id }}_C">C. {{ q.option_c }}</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="question_{{ q.id }}" id="q{{ q.id }}_D" value="D" {% if answers|get_item:q.id == 'D' %}checked{% endif %}>
+          <label class="form-check-label" for="q{{ q.id }}_D">D. {{ q.option_d }}</label>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+    <button type="submit" class="btn btn-success btn-lg w-100">Submit Test</button>
+  </form>
+</div>
+
+<!-- Violation Warning Modal -->
+<div class="modal" id="violationModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">⚠ Warning: Tab Switch Detected</h5>
+      </div>
+      <div class="modal-body">
+        <p id="violation-text"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="violation-ack-btn" data-bs-dismiss="modal">I Understand, Continue Test</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const attemptId = {{ attempt.id }};
+let remainingSeconds = {{ remaining_seconds }};
+let examStarted = false;
+let submitted = false;
+
+function getCSRFToken() {
+  return document.querySelector('[name=csrfmiddlewaretoken]').value;
+}
+
+function updateTimerDisplay() {
+  const m = Math.floor(remainingSeconds / 60);
+  const s = remainingSeconds % 60;
+  document.getElementById('timer').textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+setInterval(() => {
+  if (!examStarted || submitted) return;
+  remainingSeconds--;
+  if (remainingSeconds <= 0) {
+    remainingSeconds = 0;
+    updateTimerDisplay();
+    autoSubmitForm();
+  } else {
+    updateTimerDisplay();
+  }
+}, 1000);
+
+function autoSubmitForm() {
+  if (submitted) return;
+  submitted = true;
+  document.getElementById('auto_submit').value = '1';
+  document.getElementById('exam-form').submit();
+}
+
+document.getElementById('start-btn').addEventListener('click', function () {
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+  if (req) {
+    req.call(el).catch(() => {});
+  }
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('exam-screen').style.display = 'block';
+  updateTimerDisplay();
+  examStarted = true;
+});
+
+function reportViolation(reason) {
+  if (!examStarted || submitted) return;
+  fetch(`/exam/take/${attemptId}/violation/`, {
+    method: 'POST',
+    headers: {'X-CSRFToken': getCSRFToken(), 'Content-Type': 'application/x-www-form-urlencoded'},
+    body: `reason=${encodeURIComponent(reason)}`
+  }).then(r => r.json()).then(data => {
+    if (data.status && data.status !== 'in_progress') return;
+    document.getElementById('violation-badge').textContent =
+      `Warnings: ${data.violation_count} / ${data.max_violations}`;
+    document.getElementById('violation-text').textContent =
+      `You switched tabs or left the test window. This is warning ${data.violation_count} of ${data.max_violations}.` +
+      (data.force_submit
+        ? ' Your test will now be auto-submitted.'
+        : ' Further violations will auto-submit your test.');
+    const modal = new bootstrap.Modal(document.getElementById('violationModal'));
+    modal.show();
+    if (data.force_submit) {
+      setTimeout(() => autoSubmitForm(), 1500);
+    }
+  }).catch(() => {});
+}
+
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) reportViolation('tab_switch_or_minimize');
+});
+
+// Only treat blur as a violation when the tab is still visible (covers
+// alt-tabbing to another app on the same screen, which doesn't always
+// fire visibilitychange). Avoids double-counting the same event.
+window.addEventListener('blur', function () {
+  if (examStarted && !document.hidden) {
+    reportViolation('window_blur');
+  }
+});
+
+document.addEventListener('fullscreenchange', function () {
+  if (examStarted && !document.fullscreenElement && !submitted) {
+    reportViolation('exited_fullscreen');
+  }
+});
+
+window.addEventListener('beforeunload', function (e) {
+  if (examStarted && !submitted) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'F11') e.preventDefault();
+});
+</script>
+{% endblock %}
