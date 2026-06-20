@@ -62,7 +62,7 @@ def student_register(request):
 
 def admin_signup(request):
     if request.method == 'POST':
-        code = request.POST.get('code', '')
+        code = request.POST.get('code', '').strip()
         username = request.POST.get('username', '').strip()
         email = request.POST.get('email', '').strip()
         password = request.POST.get('password', '')
